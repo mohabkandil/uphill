@@ -31,7 +31,7 @@ public class OutboxProcessingService {
     private final ObjectMapper objectMapper;
     private final ActivityLogPersistenceService activityLogPersistenceService;
 
-    @Scheduled(fixedDelayString = "${outbox.poll.interval.ms:10000}")
+    @Scheduled(fixedDelayString = "${outbox.poll.interval.ms:30000}")
     @Transactional
     public void pollAndProcess() {
         final List<OutboxEvent> dueEvents = outboxEventPersistenceService.findPendingDueEvents(LocalDateTime.now());
