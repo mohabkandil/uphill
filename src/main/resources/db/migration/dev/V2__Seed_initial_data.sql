@@ -1,5 +1,9 @@
--- Seed initial data for testing
--- This migration adds sample data to test the idempotency functionality
+-- Seed initial data for development/testing
+-- This migration adds sample data for local development and testing
+-- Only runs in development environments (local, test profiles)
+-- 
+-- To disable in production, use: spring.flyway.locations=classpath:db/migration/prod
+-- To enable in dev, use: spring.flyway.locations=classpath:db/migration,classpath:db/migration/dev
 
 -- Insert specialties
 INSERT INTO specialties (name) VALUES 

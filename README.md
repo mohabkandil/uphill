@@ -1,6 +1,6 @@
-## Uphill - Technical Documentation
+## Uphill - Healthcare Appointment System
 
-This document provides a comprehensive technical overview of the Uphill system, including architecture, core modules, class and sequence diagrams, flow charts, lifecycle states, API surface, persistence, security, idempotency, configuration, deployment, CI/CD, and known limitations.
+A Spring Boot application for managing healthcare appointments with doctors, rooms, and time slots. Built with clean architecture, it handles appointment booking, confirmation workflows, and integrates with external services.
 
 ## Quick Start
 
@@ -24,37 +24,46 @@ API: http://localhost:8080
 - `make down` - stop services  
 - `make unit-test` - run tests
 
-### System Overview
+### What This System Does
 
-- Spring Boot application with layered architecture and scheduled background processing
-- Core domains: Appointment booking, Outbox event processing, Activity logging
-- Entrypoints: REST controllers under `com.uphill.entrypoint.rest`
-- Persistence: PostgreSQL (JPA/Hibernate) with Flyway migrations; Redis used for idempotency/cache
-- Asynchronous side effects: Outbox pattern with scheduled processor
-- Security: JWT-based authentication and method security; selective public endpoints
+This is a healthcare appointment booking system that lets patients book appointments with doctors. Here's how it works:
+
+- **Appointment Booking**: Patients can book appointments with doctors in aspecific time slot
+- **Background Processing**: When an appointment is created, the system handles confirmation steps (updating doctor calendars, reserving rooms, sending emails) in the background
+- **Activity Tracking**: Everything gets logged for audit purposes
+- **Security**: Uses JWT tokens for authentication, with some endpoints public for booking
+- **Data Storage**: PostgreSQL for main data, Redis for caching and preventing duplicate requests
 
 ### High-Level Architecture
 
 ![Architecture](docs/diagrams/architecture.svg)
 
-### Core Modules and Responsibilities
+### Main Components
 
-- Appointment Management
-  - `AppointmentService`: booking flow, resource allocation, activity logging, enqueue outbox events
-  - `AppointmentPersistenceService`: save/update appointment state
-- Outbox Pattern
-  - `OutboxEventService`: create outbox events on domain actions
-  - `OutboxProcessingService`: scheduled poller to deliver events to external services and finalize state
-- Activity Logging
-  - `ActivityLogPersistenceService`: append domain activities
-- REST Entrypoints
-  - `AppointmentController`: create/list appointments
-  - `AuthController`: login/logout
-  - `GlobalExceptionHandler`: consistent error responses
-- Persistence (Infrastructure)
-  - JPA Entities, Spring Data repositories, MapStruct mappers
-- Security & Filters
-  - `SecurityConfig`, `JwtAuthenticationFilter` (JWT), `IdempotencyFilter` (Redis-backed POST idempotency)
+**Appointment Management**
+- `AppointmentService`: Handles the booking flow, checks availability, and queues background tasks
+- `AppointmentPersistenceService`: Saves and updates appointment data
+
+**Background Processing (Outbox Pattern)**
+- `OutboxEventService`: Creates background tasks when appointments are made
+- `OutboxProcessingService`: Runs every 30 seconds to process these tasks (update doctor calendars, reserve rooms, send emails)
+
+**Activity Logging**
+- `ActivityLogPersistenceService`: Keeps track of what happened for audit trails
+
+**API Endpoints**
+- `AppointmentController`: Create and list appointments
+- `AuthController`: Login/logout for admins
+- `GlobalExceptionHandler`: Handles errors consistently
+
+**Data Layer**
+- JPA entities for database tables
+- Spring Data repositories for database queries
+- MapStruct for converting between database and domain objects
+
+**Security**
+- JWT authentication for admin endpoints
+- Idempotency filter to prevent duplicate appointment requests
 
 ### Key Class Diagram
 
@@ -76,106 +85,240 @@ API: http://localhost:8080
 
 ![Appointment State](docs/diagrams/state-appointment.svg)
 
-### REST API Surface (selected)
+### API Endpoints
 
-- POST `/api/appointments` (public)
-  - Request: patientId, doctor.specialtyId, date (ISO), timeSlot "HH:mm-HH:mm"
-  - Response: `CreateAppointmentResponse`
-- GET `/api/appointments` (ADMIN)
-  - Filters: `patientId`, `doctorId`, `roomId`, `status`, `startDate`, `endDate`, pageable
-- POST `/api/auth/login`
-  - Returns JWT token with role ADMIN
+**Public Endpoints**
+- `POST /api/appointments` - Book an appointment (no auth required)
+  - Send: patientId, specialty, date, time slot
+  - Get back: appointment details
 
-Responses are consistently wrapped with `ApiResponse<T>`.
+**Admin Endpoints** (requires JWT token)
+- `GET /api/appointments` - List all appointments with filters
+- `POST /api/auth/login` - Get admin JWT token
 
-### Persistence and Data Model
+All responses follow the same format with success/error status.
 
-- JPA Entities: Appointment, Patient, Doctor, Room, TimeSlot, OutboxEvent, ActivityLog
-- Repositories: Spring Data JPA with custom queries (filters, status updates)
-- Mapping: `EntityMapper` (MapStruct) converts JPA entities to domain models
-- Migrations: Flyway scripts in `src/main/resources/db/migration`
+### Database Structure
 
-### Outbox Pattern Details
+**Main Tables**
+- `appointments` - The core booking data
+- `patients`, `doctors`, `rooms` - Basic entities
+- `time_slots` - Available appointment times
+- `outbox_events` - Background tasks waiting to be processed
+- `activity_logs` - Audit trail of what happened
 
-- `OutboxEventEntity` stores JSONB payload, status, retryCount, nextRetryAt
-- `OutboxEventService` creates events on appointment creation
-- `OutboxProcessingService` scheduled poller:
-  - Parses payload, dispatches by `eventType`
-  - On success: marks event PROCESSED, logs activity, may transition appointment to CONFIRMED
-  - On failure: increments retry, sets `nextRetryAt`, logs failure (implementation-dependent)
+**Database Features**
+- Flyway migrations handle schema changes
+- Custom queries for filtering appointments
+- MapStruct automatically converts between database and Java objects
 
-### Security
+**Test Data Seeding**
+- **Development**: Includes sample doctors, patients, rooms, and time slots
+- **Production**: Clean database with no test data
+- **Testing**: Consistent test data for reliable tests
 
-- `SecurityConfig` permits `/actuator/**`, `/api/auth/**`, `POST /api/appointments`; all others require auth
-- `JwtAuthenticationFilter` validates Bearer token, loads admin via `AdminService`, sets `ROLE_ADMIN` in context
-- Stateless sessions; method-level security via `@PreAuthorize`
+### How Background Processing Works
 
-### Idempotency for Appointment Creation
+When someone books an appointment, the system doesn't immediately confirm it. Instead:
 
-- `IdempotencyFilter` applies to `POST /api/appointments`
-  - Uses `Idempotency-Key` header
-  - Reserves key in Redis with short TTL during processing
-  - If key is processing: returns 409
-  - If cached response exists: returns cached 200/201 body
-  - On success: caches body for 24h; on failure/exceptions: clears reservation
+1. **Create Tasks**: The system creates background tasks for:
+   - Updating the doctor's calendar
+   - Reserving the room
+   - Sending confirmation emails
 
-### Configuration
+2. **Process Tasks**: Every 30 seconds, a background job runs and:
+   - Picks up pending tasks
+   - Calls external services (doctor calendar, room reservation, email)
+   - If successful: marks task as done and logs the activity
+   - If failed: retries later with exponential backoff
 
-- Profiles: default, `local`, `docker`
-- Properties: PostgreSQL datasource, Hibernate settings, Redis, JWT, Actuator exposure
-- External mock service base URL: `external.mock.base-url`
+3. **Confirm Appointment**: Once all tasks succeed, the appointment gets confirmed
 
-### Deployment (Docker & Compose)
+### Security Setup
 
-- Multi-stage Dockerfile builds the JAR with Maven and runs with profile `docker`
-- `docker-compose.yml` services:
-  - Postgres 16 with healthcheck
-  - Redis 7 with LRU policy
-  - App container exposing 8080 with healthcheck
-  - Mock external service (Node.js) on 3001
+**Public Access**
+- Anyone can book appointments (`POST /api/appointments`)
+- Health check endpoints are public
 
-### CI/CD (Jenkins)
+**Admin Access**
+- List appointments, login endpoints require JWT token
+- Tokens are stateless and contain admin role
+- Method-level security protects admin functions
 
-- Declarative pipeline (`Jenkinsfile`)
-  - Parameters for `AWS_REGION`, `IMAGE_TAG`, `DESIRED_COUNT`
-  - Stages: Checkout → Prepare env (hydrate `deploy/.env`) → Build & Deploy (`deploy/deploy.sh`)
-  - Archives `deploy/**` artifacts post-build
+### Preventing Duplicate Bookings
 
-### Known Limitations and Assumptions
+To stop people from accidentally booking the same appointment twice:
 
-- Fixed time slots: Appointments must match predefined `TimeSlot` records; no arbitrary durations
-- Timezone handling: Not explicitly addressed; time comparisons assume consistent server TZ
-- Idempotency scope: Only `POST /api/appointments` covered by filter; other mutating endpoints not idempotent
-- Outbox delivery guarantees: At-least-once; downstream services must be idempotent
-- Retry/backoff: Basic fields present; no exponential backoff/DLQ included
-- Security surface: `POST /api/appointments` is public; rate limiting and abuse protection not implemented
-- Availability constraints: Doctor/Room selection based on time slot/date; no double-booking across fine-grained overlaps beyond slots
-- Email/notifications: Success assumed on service response; no bounce or tracking
+- Send an `Idempotency-Key` header with your booking request
+- The system remembers this key in Redis
+- If you send the same key again, you get the same response (no duplicate booking)
+- Keys expire after 24 hours
 
-### Local Development
+### Configuration Profiles
 
-- Run Postgres and Redis via Docker Compose or locally
-- Profiles:
-  - `local`: `spring.jpa.hibernate.ddl-auto=update`, Flyway enabled
-  - `docker`: externalized datasource/redis via environment variables
-- Entry point: `UphillApplication` with `@EnableScheduling`
+**Local Development** (`local`)
+- Uses local PostgreSQL and Redis
+- Auto-creates database tables
+- **Includes test data seeding** (doctors, patients, rooms, time slots)
+- External services point to localhost
 
-### Diagrams: Render Locally
+**Docker** (`docker`)
+- Uses environment variables for database/Redis connections
+- External services configured via environment
+- **No test data seeding** (clean production-like environment)
 
-- Prerequisite: Docker installed
-- Render all diagrams to SVGs:
-  - Run: `make docs-diagrams`
-- Outputs written to `docs/diagrams/*.svg`; README embeds these images
+**Testing** (`test`)
+- Uses in-memory H2 database
+- **Includes test data seeding** for consistent test data
+- Debug logging enabled
 
-### References (Code)
+### Running with Docker
 
-- `com.uphill.UphillApplication` – application bootstrap and scheduling
-- `com.uphill.core.application.service.appointment.AppointmentService` – booking flow and outbox emission
-- `com.uphill.core.application.service.appointment.OutboxProcessingService` – outbox worker
-- `com.uphill.entrypoint.rest.appointments.AppointmentController` – REST endpoints
-- `com.uphill.infrastructure.persistence.*` – entities, repositories, mappers
-- `com.uphill.entrypoint.rest.auth.security.JwtAuthenticationFilter` – JWT auth
-- `com.uphill.infrastructure.filter.IdempotencyFilter` – idempotency for create appointment
-- `docker-compose.yml`, `Dockerfile`, `deploy/deploy.sh`, `Jenkinsfile` – runtime and CI/CD
+**What's Included**
+- PostgreSQL 16 database
+- Redis 7 for caching
+- The main application
+- Mock external services (Node.js) for testing
+
+**Health Checks**
+- Database and Redis have health checks
+- Application exposes health endpoints
+- Everything starts up in the right order
+
+### Deployment Pipeline
+
+**Jenkins Pipeline**
+- Takes parameters for AWS region, image tag, and instance count
+- Builds the application and deploys to AWS
+- Archives deployment scripts for later use
+
+### Current Limitations
+
+**Scheduling Constraints**
+- Appointments must use predefined time slots (no custom durations)
+- Timezone handling isn't fully implemented
+- No double-booking protection beyond basic slot checking
+
+**Security & Reliability**
+- Only appointment booking is protected against duplicates
+- No rate limiting on public endpoints
+- Background tasks retry but don't have advanced failure handling
+- Email success is assumed (no bounce tracking)
+
+**External Dependencies**
+- External services must handle duplicate calls (idempotent)
+- No monitoring of external service health
+
+### Development Setup
+
+**Database Options**
+- Use Docker Compose for PostgreSQL and Redis
+- Or run them locally if you prefer
+
+**Configuration**
+- `local` profile: Auto-creates tables, uses localhost services
+- `docker` profile: Uses environment variables for connections
+- Background processing starts automatically
+
+### Generating Diagrams
+
+If you want to update the architecture diagrams:
+
+```bash
+make docs-diagrams
+```
+
+This creates SVG files in `docs/diagrams/` that show the system architecture, class relationships, and process flows.
+
+### Potential Improvements
+
+Here are 5 high-impact changes that would make the system more reliable and scalable:
+
+**1. Replace Background Scheduler with Temporal**
+- **Current**: `@Scheduled` polling with `OutboxProcessingService` (137 lines of complex retry logic)
+- **Suggestion**: Migrate to [Temporal.io](https://temporal.io/) for robust workflow orchestration
+- **Impact**: High - Eliminates polling overhead, provides built-in retry policies, visual workflow monitoring, and better reliability
+- **Implementation**: 
+  - **Remove**: `@Scheduled` polling, manual retry logic, outbox event persistence
+  - **Add**: Simple worker that registers existing services as Temporal activities
+  - **Result**: Your existing `DoctorCalendarService`, `RoomReservationService`, `EmailNotificationService` become Temporal activities with automatic retries and monitoring
+- **Pseudo Code**:
+  ```java
+  // 1. Define what work to do (Activity)
+  @ActivityInterface
+  public interface AppointmentActivity {
+      void updateDoctorCalendar(AppointmentEventPayload payload);
+      void reserveRoom(AppointmentEventPayload payload);
+      void sendEmail(AppointmentEventPayload payload);
+  }
+  
+  // 2. Implement the work (wrap your existing services)
+  @Component
+  public class AppointmentActivityImpl implements AppointmentActivity {
+      private final DoctorCalendarService doctorCalendarService;
+      private final RoomReservationService roomReservationService;
+      private final EmailNotificationService emailNotificationService;
+      
+      @Override
+      public void updateDoctorCalendar(AppointmentEventPayload payload) {
+          doctorCalendarService.updateDoctorCalendar(payload);
+      }
+      // ... other methods
+  }
+  
+  // 3. Start worker (one-time setup)
+  @Component
+  public class TemporalWorker {
+      @PostConstruct
+      public void startWorker() {
+          Worker worker = factory.newWorker("appointment-task-queue");
+          worker.registerActivitiesImplementations(new AppointmentActivityImpl(...));
+          factory.start();
+      }
+  }
+  
+  // 4. Trigger work (replace outbox creation)
+  public void createAppointment() {
+      AppointmentWorkflow workflow = workflowClient.newWorkflowStub(AppointmentWorkflow.class);
+      WorkflowClient.start(workflow::processAppointment, appointmentId, payload);
+  }
+  ```
+
+**2. Event-Driven Architecture**
+- **Current**: Polling every 30 seconds to process background tasks
+- **Better**: Use Kafka or AWS EventBridge for real-time event processing
+- **Why**: Faster processing, better scalability, easier to add new features
+
+**3. Better Monitoring**
+- **Current**: Basic health checks and logs
+- **Better**: Prometheus metrics, Grafana dashboards, structured logging
+- **Why**: Catch problems before users notice, understand system performance
+
+**4. Smart Caching**
+- **Current**: Redis only used to prevent duplicate bookings
+- **Better**: Cache doctors, rooms, time slots to reduce database load
+- **Why**: Faster response times, less database pressure
+
+**5. API Security & Rate Limiting**
+- **Current**: No protection against abuse, basic JWT auth
+- **Better**: Rate limiting, OAuth 2.0, API versioning
+- **Why**: Prevent abuse, better security, easier API management
+
+### Key Files
+
+**Main Application**
+- `UphillApplication.java` - Application startup and configuration
+- `AppointmentService.java` - Core booking logic
+- `OutboxProcessingService.java` - Background task processor
+
+**API Layer**
+- `AppointmentController.java` - REST endpoints
+- `JwtAuthenticationFilter.java` - Authentication
+- `IdempotencyFilter.java` - Duplicate request prevention
+
+**Infrastructure**
+- `docker-compose.yml` - Local development setup
+- `Dockerfile` - Application container
+- `Jenkinsfile` - Deployment pipeline
 
 
