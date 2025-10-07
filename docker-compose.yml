@@ -1,0 +1,74 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: uphill-postgres
+    restart: always
+    environment:
+      POSTGRES_USER: uphill
+      POSTGRES_PASSWORD: uphill_pass
+      POSTGRES_DB: uphill_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U uphill -d uphill_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: uphill-redis
+    restart: always
+    ports:
+      - "6379:6379"
+    command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  app:
+    build: .
+    container_name: uphill-app
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      mock-external:
+        condition: service_started
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/uphill_db
+      SPRING_DATASOURCE_USERNAME: uphill
+      SPRING_DATASOURCE_PASSWORD: uphill_pass
+      SPRING_REDIS_HOST: redis
+      SPRING_REDIS_PORT: 6379
+      EXTERNAL_MOCK_BASE_URL: http://mock-external:3001
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/actuator/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  mock-external:
+    image: node:20-alpine
+    container_name: uphill-mock-external
+    working_dir: /app
+    command: sh -c "npm install && node server.js"
+    ports:
+      - "3001:3001"
+    volumes:
+      - ./mock-external:/app
+
+volumes:
+  postgres_data:
+  redis_data:
