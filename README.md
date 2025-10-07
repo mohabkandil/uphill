@@ -232,9 +232,12 @@ This creates SVG files in `docs/diagrams/` that show the system architecture, cl
 
 ### Potential Improvements
 
-Here are 5 high-impact changes that would make the system more reliable and scalable:
-
 **1. Replace Background Scheduler with Temporal**
+
+For processing outbox events and handling retries, the system uses a Spring scheduler to periodically scan and dispatch pending events.
+This approach was chosen to showcase core framework capabilities and implementation skills, while keeping the infrastructure simple and fully within the Spring ecosystem.
+However, in a production environment, using a workflow engine such as Temporal would be the preferred approach. Temporal provides built-in durability, fault tolerance, and workflow visibility, making it more suitable for complex or long-running background processes.
+
 - **Current**: `@Scheduled` polling with `OutboxProcessingService` (137 lines of complex retry logic)
 - **Suggestion**: Migrate to [Temporal.io](https://temporal.io/) for robust workflow orchestration
 - **Impact**: High - Eliminates polling overhead, provides built-in retry policies, visual workflow monitoring, and better reliability
