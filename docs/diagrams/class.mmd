@@ -1,0 +1,66 @@
+classDiagram
+  class Appointment {
+    Long id
+    LocalDate date
+    AppointmentStatus status
+    Doctor doctor
+    Patient patient
+    Room room
+    TimeSlot timeSlot
+  }
+  class AppointmentStatus {
+    <<enum>>
+    BOOKED
+    CONFIRMED
+    FAILED
+    CANCELLED
+  }
+  class AppointmentService {
+    +createAppointment(appointment, timeSlotString) Appointment
+    +findAppointmentsWithFilters(...)
+  }
+  class AppointmentPersistenceService {
+    +saveAppointment(Appointment) Appointment
+    +updateAppointmentStatus(Long, AppointmentStatus) void
+  }
+  class OutboxEvent {
+    Long id
+    Long aggregateId
+    String aggregateType
+    String eventType
+    String payload
+    String status
+    Integer retryCount
+    LocalDateTime nextRetryAt
+    LocalDateTime createdAt
+  }
+  class OutboxEventService {
+    +createDoctorCalendarUpdateEvent(Appointment)
+    +createRoomReservationEvent(Appointment)
+    +createEmailConfirmationEvent(Appointment)
+  }
+  class OutboxProcessingService {
+    +pollAndProcess()
+    -processSingleEvent(OutboxEvent)
+  }
+  class ActivityLog {
+    Long id
+    Long userId
+    String action
+    String description
+    LocalDateTime createdAt
+  }
+  Appointment --> Doctor
+  Appointment --> Patient
+  Appointment --> Room
+  Appointment --> TimeSlot
+  AppointmentService --> AppointmentPersistenceService
+  AppointmentService --> OutboxEventService
+  AppointmentService --> ActivityLogPersistenceService
+  OutboxProcessingService --> OutboxEventPersistenceService
+  OutboxProcessingService --> AppointmentPersistenceService
+  OutboxProcessingService --> DoctorCalendarService
+  OutboxProcessingService --> RoomReservationService
+  OutboxProcessingService --> EmailNotificationService
+
+

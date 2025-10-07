@@ -1,0 +1,35 @@
+sequenceDiagram
+  autonumber
+  participant SCH as @Scheduled
+  participant OPS as OutboxProcessingService
+  participant OPP as OutboxEventPersistenceService
+  participant DCS as DoctorCalendarService
+  participant RRS as RoomReservationService
+  participant ENS as EmailNotificationService
+  participant APS as AppointmentPersistenceService
+  participant ALS as ActivityLogPersistenceService
+
+  SCH->>OPS: pollAndProcess()
+  OPS->>OPP: findPendingDueEvents(now)
+  OPP-->>OPS: [OutboxEvent...]
+  loop each event
+    OPS->>OPS: processSingleEvent(event)
+    alt DOCTOR_CALENDAR_UPDATE
+      OPS->>DCS: updateDoctorCalendar(payload)
+    else ROOM_RESERVATION
+      OPS->>RRS: reserveRoom(payload)
+    else SEND_EMAIL / SEND_CONFIRMATION_EMAIL
+      OPS->>ENS: sendEmail(payload)
+    else Unknown type
+      OPS->>OPS: mark failure
+    end
+    alt success
+      OPS->>OPP: save(event PROCESSED)
+      OPS->>ALS: save(OUTBOX_EVENT_PROCESSED)
+      OPS->>APS: checkAndConfirmAppointment(aggregateId)
+    else failure
+      OPS->>OPS: handleFailure(event)
+    end
+  end
+
+

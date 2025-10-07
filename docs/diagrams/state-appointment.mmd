@@ -1,0 +1,9 @@
+stateDiagram-v2
+  [*] --> BOOKED
+  BOOKED --> CONFIRMED: all outbox events processed
+  BOOKED --> FAILED: side effects failed beyond retries
+  CONFIRMED --> CANCELLED: cancel action
+  FAILED --> [*]
+  CANCELLED --> [*]
+
+

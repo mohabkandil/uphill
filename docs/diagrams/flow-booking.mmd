@@ -1,0 +1,11 @@
+flowchart TD
+  A[Receive CreateAppointment Request] --> B[Parse timeSlotString to start/end]
+  B --> C[Find TimeSlot by range]
+  C --> D[Find available Doctor by specialty/date/timeSlot]
+  D --> E[Find available Room by date/timeSlot]
+  E --> F[Log selections to ActivityLog]
+  F --> G[Set status=BOOKED; persist Appointment]
+  G --> H[Enqueue outbox events: DOC_CAL, ROOM_RESV, EMAIL]
+  H --> I[Return 201 Created]
+
+

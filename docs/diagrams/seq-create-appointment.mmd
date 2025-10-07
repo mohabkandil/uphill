@@ -1,0 +1,30 @@
+sequenceDiagram
+  autonumber
+  participant C as Client
+  participant AC as AppointmentController
+  participant AS as AppointmentService
+  participant TS as TimeSlotService
+  participant DS as DoctorService
+  participant RS as RoomService
+  participant APS as AppointmentPersistenceService
+  participant OES as OutboxEventService
+  participant ALS as ActivityLogPersistenceService
+
+  C->>AC: POST /api/appointments {patientId, specialtyId, date, timeSlot "HH:mm-HH:mm"}
+  AC->>AS: createAppointment(domainRequest, timeSlotString)
+  AS->>TS: findByTimeRange(startTime, endTime)
+  TS-->>AS: TimeSlot
+  AS->>DS: findAvailableDoctor(specialtyId, date, timeSlotId)
+  DS-->>AS: Doctor
+  AS->>RS: findAvailableRoom(date, timeSlotId)
+  RS-->>AS: Room
+  AS->>ALS: save(DOCTOR_SELECTED, ROOM_SELECTED)
+  AS->>APS: saveAppointment(BOOKED)
+  APS-->>AS: Appointment (id)
+  AS->>OES: createDoctorCalendarUpdateEvent(appointment)
+  AS->>OES: createRoomReservationEvent(appointment)
+  AS->>OES: createEmailConfirmationEvent(appointment)
+  AS-->>AC: Appointment
+  AC-->>C: 201 Created {appointmentId, ...}
+
+
